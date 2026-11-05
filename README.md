@@ -1,22 +1,22 @@
-[README.md](https://github.com/user-attachments/files/34434698/README.md)
-# checktour-portal (unificado)
+[README.md](https://github.com/user-attachments/files/34435137/README.md)
+# checktour-portal (unified)
 
-Um único Worker com o portal + as 3 checklists:
+A single Worker that serves the portal and all 3 checklists:
 
-| Caminho | Projeto |
+| Path | Project |
 |---|---|
-| `/` | Portal (atalhos + ETA) |
-| `/up/` | Check List Tour — Upholstery (antigo checktourup) |
-| `/bo/` | Check List Tour — Board (antigo checktourbo) |
-| `/dux/` | Check List — DUX (antigo dux-scan) |
+| `/` | Portal (shortcuts + ETA) |
+| `/up/` | Check List Tour — Upholstery (formerly checktourup) |
+| `/bo/` | Check List Tour — Board (formerly checktourbo) |
+| `/dux/` | Check List — DUX (formerly dux-scan) |
 
-Admin continua igual: acrescente `?admin=1` (ex.: `/?admin=1`, `/up/?admin=1`).
-No portal em modo admin os atalhos já abrem cada checklist com `?admin=1`.
+Admin access works the same as before: add `?admin=1` to the URL (e.g. `/?admin=1`, `/up/?admin=1`).
+In admin mode, the portal shortcuts open each checklist with `?admin=1` already applied.
 
-## Estrutura
+## Structure
 ```
-wrangler.jsonc         config (mesmo RESEND_API_KEY / REPORT_RECIPIENTS dos projetos antigos)
-src/index.js           Worker + ChecklistState (3 instâncias: up/bo/dux) + PortalState (ETA)
+wrangler.jsonc         config (same RESEND_API_KEY / REPORT_RECIPIENTS as the old projects)
+src/index.js           Worker + ChecklistState (3 instances: up/bo/dux) + PortalState (ETA)
 dist/index.html        portal
 dist/up/index.html     Upholstery
 dist/bo/index.html     Board
@@ -24,14 +24,18 @@ dist/dux/index.html    DUX
 ```
 
 ## Deploy
-1. Suba esta pasta num repositório novo do GitHub.
-2. Cloudflare → Workers & Pages → Create → Import a repository → selecione o repo → Deploy.
-   O secret `resend-api-key` do Secrets Store já é usado pelos projetos antigos, então funciona direto.
-3. Abra `/?admin=1`, entre em cada projeto e suba a planilha de novo (os dados antigos ficam nos Workers antigos).
-4. Quando tudo estiver ok, apague os Workers antigos (checktourup, checktourbo, dux-scan).
+1. Push this folder to a new GitHub repository.
+2. Cloudflare → Workers & Pages → Create → Import a repository → select the repo → Deploy.
+   The `resend-api-key` secret in the Secrets Store is already used by the old projects, so it works as-is.
+3. Open `/?admin=1`, go into each project and upload its sheet again (the old data stays in the old Workers).
+4. Once everything is working, delete the old Workers (checktourup, checktourbo, dux-scan).
 
-## Mudanças em relação aos projetos antigos
-- Chamadas de API agora usam o prefixo do projeto (`/up/api/...`, `/bo/api/...`, `/dux/api/...`).
-- Cada checklist tem um link "← All projects" que volta para o portal (mantém `?admin=1`).
-- E-mail por projeto: assunto e nome do CSV identificam Upholstery / Board / DUX.
-- Corrigido bug da rota `/note` do Upholstery/Board (variável `isComplete` inexistente → erro 500).
+## Editing the ETA
+Open `/?admin=1`, pick a date for each project and click **Save ETA**.
+**Clear** resets it to `**/**/****`. Everyone sees the new ETA immediately.
+
+## Changes compared to the old projects
+- API calls now use the project prefix (`/up/api/...`, `/bo/api/...`, `/dux/api/...`).
+- Each checklist has an "← All projects" link back to the portal (keeps `?admin=1`).
+- Per-project email: subject and CSV filename identify Upholstery / Board / DUX.
+- Fixed a bug in the `/note` route of Upholstery/Board (undefined `isComplete` variable → 500 error).
