@@ -1,0 +1,30 @@
+{
+  "name": "checktour-portal",
+  "compatibility_date": "2026-07-15",
+  "main": "src/index.js",
+  "vars": {
+    "REPORT_RECIPIENTS": "jarme@boconcept.com"
+  },
+  "secrets_store_secrets": [
+    {
+      "binding": "RESEND_API_KEY",
+      "store_id": "07fda41a4c7444849daa3e4232849687",
+      "secret_name": "resend-api-key"
+    }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/up/api/*", "/bo/api/*", "/dux/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHECKLIST", "class_name": "ChecklistState" },
+      { "name": "PORTAL", "class_name": "PortalState" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChecklistState", "PortalState"] }
+  ]
+}
