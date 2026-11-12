@@ -83,7 +83,7 @@
   .ico svg{ color: var(--ink); }
   .item.dux .ico svg{ color: var(--stamp-green); }
 
-  .txt{ min-width:0; }
+  .txt{ min-width:0; flex: 1; }
   .name{
     font-family: 'Courier New', Courier, monospace;
     font-size: 22px; font-weight: bold;
@@ -93,10 +93,10 @@
     display:block;
     font-family: 'Courier New', Courier, monospace;
     font-size: 15px; color: var(--ink-soft);
-    margin-top: 4px; white-space: nowrap;
+    margin-top: 4px;
   }
-  .eta strong{ color: var(--stamp-green); }
-  .arrow{ margin-left:auto; color: var(--ink-soft); font-size: 30px; line-height: 1; }
+  .eta strong{ color: var(--stamp-green); white-space: nowrap; }
+  .arrow{ flex: 0 0 auto; margin-left:auto; color: var(--ink-soft); font-size: 30px; line-height: 1; }
 
   .eta-edit{
     display:flex; gap: 8px; align-items:center;
@@ -175,7 +175,7 @@
     </div>
 
     <p class="footer-note admin-only">The link with <code>?admin=1</code> lets you edit the ETAs and opens each project in admin mode — only use that version yourself, and share the plain link with everyone else.</p>
-    <p class="footer-note" id="footerViewerNote" style="display:none;">ETA is updated whenever a new sheet is uploaded.</p>
+    <p class="footer-note" id="footerViewerNote" style="display:none;">Shows the ETA until the list is fully checked, then the date it was received.</p>
   </div>
 </div>
 
@@ -201,6 +201,15 @@ const statusMsg = document.getElementById('statusMsg');
 const subtitleEl = document.getElementById('subtitle');
 
 let etas = {};
+let received = {};
+
+// ISO timestamp -> dd/mm/yyyy in the viewer's local time
+function fmtLocal(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
 
 function fmt(iso){
   if (!iso) return '**/**/****';
@@ -213,13 +222,17 @@ function render(){
     const href = isAdmin ? p.url + '?admin=1' : p.url;
     const value = etas[p.key] || '';
     const etaText = value ? `<strong>${fmt(value)}</strong>` : fmt('');
+    const recv = received[p.key];
+    const line = recv
+      ? `${p.name} received <strong class="received">${fmtLocal(recv)}</strong>`
+      : `${p.name} ETA ${etaText}`;
     return `
       <div class="item ${p.cls}">
         <a class="link" href="${href}">
           <div class="ico">${ICONS[p.icon]}</div>
           <div class="txt">
             <div class="name">${p.name}</div>
-            <span class="eta">${p.name} ETA ${etaText}</span>
+            <span class="eta">${line}</span>
           </div>
           <span class="arrow">›</span>
         </a>
@@ -252,8 +265,10 @@ async function loadEtas(){
     const res = await fetch('/api/eta', { cache: 'no-store' });
     const data = await res.json();
     etas = data.etas || {};
+    received = data.received || {};
   }catch(e){
     etas = {};
+    received = {};
   }
   render();
 }
