@@ -55,6 +55,29 @@ export class ChecklistState {
     return PROJECTS[this.project] || PROJECTS.up;
   }
 
+  // Date the list was fully checked (ISO string), or null.
+  // Set when the list becomes complete, cleared when it is no longer complete,
+  // when a new sheet is uploaded or when progress is reset.
+  async updateReceived() {
+    const complete =
+      await this.isFullyComplete();
+
+    const current =
+      await this.state.storage.get("receivedAt");
+
+    if (complete && !current) {
+      await this.state.storage.put(
+        "receivedAt",
+        new Date().toISOString()
+      );
+    }
+    else if (!complete && current) {
+      await this.state.storage.delete("receivedAt");
+    }
+
+    return complete;
+  }
+
   async getDataset() {
     return (
       await this.state.storage.get(
@@ -707,6 +730,19 @@ export class ChecklistState {
 
       if (
         url.pathname ===
+          "/received"
+        &&
+        request.method ===
+          "GET"
+      ) {
+        return json({
+          receivedAt:
+            (await this.state.storage.get("receivedAt")) || null
+        });
+      }
+
+      if (
+        url.pathname ===
           "/ticks"
         &&
         request.method ===
@@ -763,6 +799,10 @@ export class ChecklistState {
         await this.state.storage.put(
           "reportSent",
           false
+        );
+
+        await this.state.storage.delete(
+          "receivedAt"
         );
 
         return json({
@@ -937,9 +977,7 @@ export class ChecklistState {
         );
 
         const allComplete =
-          isComplete
-            ? await this.isFullyComplete()
-            : false;
+          await this.updateReceived();
 
         return json({
           ok:
@@ -1066,9 +1104,7 @@ export class ChecklistState {
         );
 
         const allComplete =
-          cleanNote
-            ? await this.isFullyComplete()
-            : false;
+          await this.updateReceived();
 
         return json({
           ok:
@@ -1105,6 +1141,10 @@ export class ChecklistState {
         await this.state.storage.put(
           "reportSent",
           false
+        );
+
+        await this.state.storage.delete(
+          "receivedAt"
         );
 
         return json({
@@ -1369,7 +1409,30 @@ export default {
       return forward(stub, request, url, "/" + project + "/api", { "x-project": project });
     }
 
-    // Portal API: /api/eta
+    // Portal API: GET /api/eta also returns the date each list was fully checked
+    if (url.pathname === "/api/eta" && request.method === "GET") {
+      const portal = env.PORTAL.get(env.PORTAL.idFromName("singleton"));
+      const etaRes = await portal.fetch(new Request(url.origin + "/eta"));
+      const data = await etaRes.json();
+
+      const map = { upholstery: "up", board: "bo", dux: "dux" };
+      data.received = {};
+
+      await Promise.all(
+        Object.entries(map).map(async ([key, project]) => {
+          try {
+            const stub = env.CHECKLIST.get(env.CHECKLIST.idFromName(project));
+            const r = await stub.fetch(new Request(url.origin + "/received"));
+            const j = await r.json();
+            if (j.receivedAt) data.received[key] = j.receivedAt;
+          } catch (e) {}
+        })
+      );
+
+      return json(data);
+    }
+
+    // Portal API: /api/eta (save)
     if (url.pathname.startsWith("/api/")) {
       const stub = env.PORTAL.get(env.PORTAL.idFromName("singleton"));
       return forward(stub, request, url, "/api");
