@@ -202,6 +202,48 @@ export class ChecklistState {
     );
   }
 
+  // Rows done (qty reached or noted) out of total rows.
+  async getProgress() {
+    const dataset =
+      await this.getDataset();
+
+    if (
+      !dataset ||
+      !dataset.rows ||
+      !dataset.rows.length
+    ) {
+      return { done: 0, total: 0 };
+    }
+
+    const ticks =
+      await this.getAllTicks();
+
+    const notes =
+      await this.getAllNotes();
+
+    const seen = {};
+    let done = 0;
+
+    for (const row of dataset.rows) {
+      const base = this.rowKey(row);
+      seen[base] = (seen[base] || 0) + 1;
+      const key = seen[base] > 1 ? base + "d" + seen[base] : base;
+
+      const expected =
+        this.parseExpectedQty(row, dataset.qtyColIndex);
+
+      const qty =
+        ticks[key] ? (ticks[key].qty || 0) : 0;
+
+      const note =
+        String(notes[key] || "").trim();
+
+      if (qty >= expected || note) done++;
+    }
+
+    return { done, total: dataset.rows.length };
+  }
+
   async isFullyComplete() {
     const dataset =
       await this.getDataset();
@@ -735,9 +777,18 @@ export class ChecklistState {
         request.method ===
           "GET"
       ) {
+        const progress =
+          await this.getProgress();
+
         return json({
           receivedAt:
-            (await this.state.storage.get("receivedAt")) || null
+            (await this.state.storage.get("receivedAt")) || null,
+
+          done:
+            progress.done,
+
+          total:
+            progress.total
         });
       }
 
@@ -1417,6 +1468,7 @@ export default {
 
       const map = { upholstery: "up", board: "bo", dux: "dux" };
       data.received = {};
+      data.progress = {};
 
       await Promise.all(
         Object.entries(map).map(async ([key, project]) => {
@@ -1425,6 +1477,7 @@ export default {
             const r = await stub.fetch(new Request(url.origin + "/received"));
             const j = await r.json();
             if (j.receivedAt) data.received[key] = j.receivedAt;
+            data.progress[key] = { done: j.done || 0, total: j.total || 0 };
           } catch (e) {}
         })
       );
