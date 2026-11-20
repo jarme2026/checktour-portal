@@ -98,6 +98,31 @@
   .eta strong{ color: var(--stamp-green); white-space: nowrap; }
   .arrow{ flex: 0 0 auto; margin-left:auto; color: var(--ink-soft); font-size: 30px; line-height: 1; }
 
+  .progress-row{
+    display:flex; gap: 12px; align-items:center;
+    padding: 10px 16px;
+    border-top: 1px dashed var(--board-dark);
+    background: var(--card);
+  }
+  .progress-row label{
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--ink-soft); font-family: 'Courier New', monospace;
+  }
+  .progress-track{
+    flex: 1; height: 10px; border-radius: 5px;
+    background: var(--paper-line); border: 1px solid var(--board-dark);
+    overflow: hidden;
+  }
+  .progress-fill{
+    height: 100%; background: var(--stamp-green);
+    transition: width 0.4s ease;
+  }
+  .progress-num{
+    font-family: 'Courier New', monospace; font-size: 14px; font-weight: bold;
+    color: var(--ink); min-width: 70px; text-align: right;
+  }
+  .progress-num.full{ color: var(--stamp-green); }
+
   .eta-edit{
     display:flex; gap: 8px; align-items:center;
     padding: 10px 16px 14px;
@@ -144,6 +169,7 @@
   .footer-note code{ background: var(--paper-line); padding: 1px 5px; border-radius: 3px; }
 
   @media (max-width: 700px){
+    .progress-row{ display: none; }
     body{ padding: 20px 8px 60px; }
     .clip{ display: none; }
     .board{ padding: 22px 14px 26px; border-radius: 10px; }
@@ -202,6 +228,7 @@ const subtitleEl = document.getElementById('subtitle');
 
 let etas = {};
 let received = {};
+let progress = {};
 
 // ISO timestamp -> dd/mm/yyyy in the viewer's local time
 function fmtLocal(iso){
@@ -217,7 +244,24 @@ function fmt(iso){
   return `${d}/${m}/${y}`;
 }
 
+// Admin only (desktop): "Progress [bar] 40/106"
+function progressRow(key){
+  const pr = progress[key];
+  if (!pr || !pr.total) return '';
+  const pct = Math.min(100, Math.round(pr.done / pr.total * 100));
+  return `
+        <div class="progress-row">
+          <label>Progress</label>
+          <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <span class="progress-num${pr.done >= pr.total ? ' full' : ''}">${pr.done}/${pr.total}</span>
+        </div>`;
+}
+
 function render(){
+  // keep ETA dates the admin typed but has not saved yet
+  const typed = {};
+  listEl.querySelectorAll('input[type=date][data-dirty="1"]').forEach(inp => { typed[inp.dataset.key] = inp.value; });
+
   listEl.innerHTML = PROJECTS.map(p => {
     const href = isAdmin ? p.url + '?admin=1' : p.url;
     const value = etas[p.key] || '';
@@ -236,6 +280,7 @@ function render(){
           </div>
           <span class="arrow">›</span>
         </a>
+        ${isAdmin ? progressRow(p.key) : ''}
         ${isAdmin ? `
         <div class="eta-edit">
           <label for="eta_${p.key}">ETA</label>
@@ -245,9 +290,20 @@ function render(){
       </div>`;
   }).join('');
 
+  Object.entries(typed).forEach(([key, val]) => {
+    const inp = document.getElementById('eta_' + key);
+    if (inp){ inp.value = val; inp.dataset.dirty = '1'; }
+  });
+
+  listEl.querySelectorAll('input[type=date]').forEach(inp => {
+    inp.addEventListener('input', () => { inp.dataset.dirty = '1'; });
+  });
+
   listEl.querySelectorAll('[data-clear]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.getElementById('eta_' + btn.dataset.clear).value = '';
+      const inp = document.getElementById('eta_' + btn.dataset.clear);
+      inp.value = '';
+      inp.dataset.dirty = '1';
     });
   });
 }
@@ -266,11 +322,35 @@ async function loadEtas(){
     const data = await res.json();
     etas = data.etas || {};
     received = data.received || {};
+    progress = data.progress || {};
   }catch(e){
-    etas = {};
-    received = {};
+    return; // keep what is on screen
   }
   render();
+}
+
+// Admin on a computer: auto-refresh the progress while the tab is visible.
+// - every 1 minute while someone is checking a list (started, not finished)
+// - every 1 hour otherwise, just to notice when a list starts
+const ACTIVE_REFRESH_MS = 60 * 1000;
+const IDLE_REFRESH_MS = 60 * 60 * 1000;
+
+function someoneChecking(){
+  return Object.values(progress).some(pr => pr && pr.total && pr.done > 0 && pr.done < pr.total);
+}
+
+function scheduleRefresh(){
+  clearTimeout(scheduleRefresh._t);
+  const wait = someoneChecking() ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS;
+  scheduleRefresh._t = setTimeout(async () => {
+    if (!document.hidden) await loadEtas();
+    scheduleRefresh();
+  }, wait);
+}
+
+const isDesktop = window.matchMedia('(min-width: 701px)').matches;
+if (isAdmin && isDesktop){
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadEtas().then(scheduleRefresh); });
 }
 
 saveBtn.addEventListener('click', async () => {
@@ -286,6 +366,7 @@ saveBtn.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed');
     etas = data.etas || {};
+    listEl.querySelectorAll('input[type=date]').forEach(inp => { delete inp.dataset.dirty; });
     render();
     showStatus('✓ ETA saved', true);
   }catch(e){
@@ -303,7 +384,7 @@ if (!isAdmin){
 }
 
 render();
-loadEtas();
+loadEtas().then(() => { if (isAdmin && isDesktop) scheduleRefresh(); });
 </script>
 </body>
 </html>
