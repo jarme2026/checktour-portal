@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/34754600/README.md)
+[README.md](https://github.com/user-attachments/files/35142981/README.md)
 # checktour-portal (unified)
 
 A single Worker that serves the portal and all 3 checklists:
@@ -38,6 +38,13 @@ Open `/?admin=1`, pick a date for each project and click **Save ETA**.
 Each portal card shows `<Project> ETA dd/mm/yyyy` until that list is fully checked
 (every item done or noted). It then shows `<Project> received dd/mm/yyyy` with the date it was completed.
 It goes back to the ETA when a new sheet is uploaded, progress is cleared, or an item is unchecked.
+
+## Admin progress (desktop only)
+On `/?admin=1` opened on a computer, each card shows a progress bar with `done/total`
+(rows checked or noted out of all rows). It refreshes every 1 minute while a list is being checked (started, not finished),
+and every 1 hour otherwise, only while the tab is open.
+When the tab is reopened (or comes back to the foreground) it refreshes immediately.
+Hidden on mobile and in the normal (non-admin) view.
 
 ## Changes compared to the old projects
 - API calls now use the project prefix (`/up/api/...`, `/bo/api/...`, `/dux/api/...`).
