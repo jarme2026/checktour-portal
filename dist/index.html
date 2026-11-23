@@ -10,12 +10,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="ABC living">
+<meta name="apple-mobile-web-app-title" content="Arrival list">
 <script>
-  // Admin link installs a separate "ABC Admin" app that always opens with ?admin=1
+  // Admin link installs a separate "Arrival Admin" app that always opens with ?admin=1
   if (new URLSearchParams(location.search).get('admin') === '1') {
     document.getElementById('appManifest').href = '/manifest-admin.json';
-    document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'ABC Admin';
+    document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'Arrival Admin';
   }
 </script>
 <title>Check List Tour</title>
