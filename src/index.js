@@ -1386,7 +1386,134 @@ function json(
 }
 
 // =====================================================
-// PORTAL STATE (ETA per project)
+// WEB PUSH (no libraries — WebCrypto only)
+//
+// - VAPID keys are created automatically on first use and kept in
+//   the PortalState Durable Object (nothing to configure).
+// - Payload encryption: aes128gcm (RFC 8291 / RFC 8188).
+// =====================================================
+
+const PUSH_PROJECTS = {
+  up:  { name: "Upholstery", path: "/up/",  etaKey: "upholstery" },
+  bo:  { name: "Board",      path: "/bo/",  etaKey: "board" },
+  dux: { name: "DUX",        path: "/dux/", etaKey: "dux" }
+};
+
+const enc = new TextEncoder();
+
+function b64urlEncode(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let bin = "";
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(str) {
+  const s = String(str).replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(s + "===".slice((s.length + 3) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function concatBytes(...parts) {
+  const len = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+async function hkdf(salt, ikm, info, length) {
+  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt, info },
+    key,
+    length * 8
+  );
+  return new Uint8Array(bits);
+}
+
+async function createVapidKeys() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const publicRaw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+  const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+  return { publicKey: b64urlEncode(publicRaw), privateJwk };
+}
+
+async function vapidAuthHeader(endpoint, vapid, subject) {
+  const aud = new URL(endpoint).origin;
+  const header = b64urlEncode(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const payload = b64urlEncode(enc.encode(JSON.stringify({
+    aud,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: subject
+  })));
+  const unsigned = header + "." + payload;
+
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    vapid.privateJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc.encode(unsigned));
+
+  return "vapid t=" + unsigned + "." + b64urlEncode(sig) + ", k=" + vapid.publicKey;
+}
+
+// Encrypts `payload` (string) for one subscription. Returns the request body.
+async function encryptPushPayload(subscription, payload) {
+  const uaPublic = b64urlDecode(subscription.keys.p256dh);
+  const authSecret = b64urlDecode(subscription.keys.auth);
+
+  const local = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey("raw", local.publicKey));
+
+  const uaKey = await crypto.subtle.importKey("raw", uaPublic, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const ecdhSecret = new Uint8Array(
+    await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, local.privateKey, 256)
+  );
+
+  const keyInfo = concatBytes(enc.encode("WebPush: info\0"), uaPublic, asPublic);
+  const ikm = await hkdf(authSecret, ecdhSecret, keyInfo, 32);
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, enc.encode("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = await hkdf(salt, ikm, enc.encode("Content-Encoding: nonce\0"), 12);
+
+  const plaintext = concatBytes(enc.encode(payload), new Uint8Array([2]));
+  const aesKey = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aesKey, plaintext));
+
+  const rs = new Uint8Array(4);
+  new DataView(rs.buffer).setUint32(0, 4096);
+
+  return concatBytes(salt, rs, new Uint8Array([asPublic.length]), asPublic, cipher);
+}
+
+async function sendPush(subscription, payload, vapid, subject) {
+  const body = await encryptPushPayload(subscription, payload);
+  return fetch(subscription.endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: await vapidAuthHeader(subscription.endpoint, vapid, subject),
+      "Content-Encoding": "aes128gcm",
+      "Content-Type": "application/octet-stream",
+      TTL: "86400",
+      Urgency: "high"
+    },
+    body
+  });
+}
+
+// =====================================================
+// PORTAL STATE (ETA per project + push subscriptions)
 // =====================================================
 
 export class PortalState {
@@ -1397,6 +1524,63 @@ export class PortalState {
 
   async getEtas() {
     return (await this.state.storage.get("etas")) || {};
+  }
+
+  async getSubs() {
+    return (await this.state.storage.get("pushSubs")) || {};
+  }
+
+  async getVapid() {
+    let vapid = await this.state.storage.get("vapid");
+    if (!vapid) {
+      vapid = await createVapidKeys();
+      await this.state.storage.put("vapid", vapid);
+    }
+    return vapid;
+  }
+
+  vapidSubject() {
+    const first = String(this.env.REPORT_RECIPIENTS || "").split(",")[0].trim();
+    return first ? "mailto:" + first : "mailto:admin@example.com";
+  }
+
+  // Sends "new sheet" to every subscribed device; removes expired ones.
+  async notifyNewSheet(project) {
+    const subs = await this.getSubs();
+    const entries = Object.entries(subs);
+    if (!entries.length) return { ok: true, sent: 0, removed: 0 };
+
+    const vapid = await this.getVapid();
+    const subject = this.vapidSubject();
+
+    // "Upholstery - 19/11/2026" (ETA date saved in the portal for this list)
+    const eta = (await this.getEtas())[project.etaKey];
+    const title = eta
+      ? project.name + " - " + eta.split("-").reverse().join("/")
+      : project.name;
+    let sent = 0;
+    let removed = 0;
+
+    await Promise.all(entries.map(async ([endpoint, entry]) => {
+      const payload = JSON.stringify({
+        title,
+        body: "A new " + project.name + " list is ready. Tap to open the checklist.",
+        url: project.path + (entry.admin ? "?admin=1" : ""),
+        tag: "sheet-" + project.name.toLowerCase()
+      });
+      try {
+        const res = await sendPush(entry.subscription, payload, vapid, subject);
+        if (res.status === 404 || res.status === 410) {
+          delete subs[endpoint];
+          removed++;
+        } else if (res.ok) {
+          sent++;
+        }
+      } catch (e) {}
+    }));
+
+    if (removed) await this.state.storage.put("pushSubs", subs);
+    return { ok: true, sent, removed };
   }
 
   async fetch(request) {
@@ -1420,6 +1604,51 @@ export class PortalState {
 
         await this.state.storage.put("etas", etas);
         return json({ ok: true, etas });
+      }
+
+      // ---------- push notifications ----------
+
+      if (url.pathname === "/push/key" && request.method === "GET") {
+        const vapid = await this.getVapid();
+        return json({ publicKey: vapid.publicKey });
+      }
+
+      if (url.pathname === "/push/subscribe" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const sub = body.subscription || {};
+
+        if (
+          typeof sub.endpoint !== "string" ||
+          !sub.endpoint.startsWith("https://") ||
+          !sub.keys || !sub.keys.p256dh || !sub.keys.auth
+        ) {
+          return json({ ok: false, error: "invalid subscription" }, 400);
+        }
+
+        const subs = await this.getSubs();
+        subs[sub.endpoint] = {
+          subscription: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
+          admin: body.admin === true,
+          created: subs[sub.endpoint] ? subs[sub.endpoint].created : new Date().toISOString()
+        };
+        await this.state.storage.put("pushSubs", subs);
+        return json({ ok: true });
+      }
+
+      if (url.pathname === "/push/unsubscribe" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const subs = await this.getSubs();
+        delete subs[String(body.endpoint || "")];
+        await this.state.storage.put("pushSubs", subs);
+        return json({ ok: true });
+      }
+
+      // Internal only (blocked from the outside by the main worker)
+      if (url.pathname === "/push/notify" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const project = PUSH_PROJECTS[body.project];
+        if (!project) return json({ ok: false, error: "unknown project" }, 400);
+        return json(await this.notifyNewSheet(project));
       }
 
       return json({ error: "not found" }, 404);
@@ -1449,7 +1678,7 @@ function forward(stub, request, url, prefix, extraHeaders) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // Checklist APIs: /up/api/..., /bo/api/..., /dux/api/...
@@ -1457,7 +1686,21 @@ export default {
     if (match) {
       const project = match[1];
       const stub = env.CHECKLIST.get(env.CHECKLIST.idFromName(project));
-      return forward(stub, request, url, "/" + project + "/api", { "x-project": project });
+      const res = await forward(stub, request, url, "/" + project + "/api", { "x-project": project });
+
+      // New sheet uploaded -> notify every subscribed phone (in the background)
+      if (match[2] === "/dataset" && request.method === "POST" && res.ok && ctx) {
+        const portal = env.PORTAL.get(env.PORTAL.idFromName("singleton"));
+        ctx.waitUntil(
+          portal.fetch(new Request(url.origin + "/push/notify", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ project })
+          })).catch(() => {})
+        );
+      }
+
+      return res;
     }
 
     // Portal API: GET /api/eta also returns the date each list was fully checked
@@ -1485,7 +1728,12 @@ export default {
       return json(data);
     }
 
-    // Portal API: /api/eta (save)
+    // Internal route, never callable from the outside
+    if (url.pathname === "/api/push/notify") {
+      return json({ error: "not found" }, 404);
+    }
+
+    // Portal API: /api/eta (save), /api/push/key|subscribe|unsubscribe
     if (url.pathname.startsWith("/api/")) {
       const stub = env.PORTAL.get(env.PORTAL.idFromName("singleton"));
       return forward(stub, request, url, "/api");
