@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/35142981/README.md)
+[README.md](https://github.com/user-attachments/files/35287209/README.md)
 # checktour-portal (unified)
 
 A single Worker that serves the portal and all 3 checklists:
@@ -21,6 +21,10 @@ dist/index.html        portal
 dist/up/index.html     Upholstery
 dist/bo/index.html     Board
 dist/dux/index.html    DUX
+dist/manifest.json     app install info (normal users)
+dist/manifest-admin.json  app install info (admin, opens ?admin=1)
+dist/sw.js             service worker (install + notifications)
+dist/icons/            ABC living logo / app icons
 ```
 
 ## Deploy
@@ -45,6 +49,20 @@ On `/?admin=1` opened on a computer, each card shows a progress bar with `done/t
 and every 1 hour otherwise, only while the tab is open.
 When the tab is reopened (or comes back to the foreground) it refreshes immediately.
 Hidden on mobile and in the normal (non-admin) view.
+
+## Phone app (install) — "ABC living"
+The portal can be installed on the phone home screen (logo in `dist/icons/`).
+- **Android (Chrome/Edge):** open the site and tap **⬇ Install app** (or browser menu → Install app).
+- **iPhone/iPad (Safari):** tap **Share** → **Add to Home Screen**.
+- The normal link installs **ABC living**; the `?admin=1` link installs a separate **ABC Admin** app that always opens in admin mode.
+
+## Notifications (new sheet)
+- In the app, tap **🔔 Enable notifications** and allow. Works for normal users and admin.
+- Every time a sheet is uploaded in Upholstery, Board or DUX, all enabled phones get
+  "<Project> - dd/mm/yyyy" (the ETA date saved in the portal for that list; just "<Project>" if no ETA is set). Tapping it opens that checklist (admin devices open it with `?admin=1`).
+- iPhone: only inside the installed app (Add to Home Screen first), iOS 16.4 or newer.
+- No keys to configure: the Worker creates its own push keys on first use (stored in the Durable Object).
+- To stop: tap **Turn off** next to "Notifications on", or block notifications in the phone settings.
 
 ## Changes compared to the old projects
 - API calls now use the project prefix (`/up/api/...`, `/bo/api/...`, `/dux/api/...`).
