@@ -1,7 +1,7 @@
 {
   "id": "/?admin=1",
-  "name": "ABC living — Admin",
-  "short_name": "ABC Admin",
+  "name": "Arrival list — Admin",
+  "short_name": "Arrival Admin",
   "description": "Check List Tour — Upholstery, Board and DUX",
   "start_url": "/?admin=1",
   "scope": "/",
