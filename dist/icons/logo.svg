@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#000"/>
+  <text x="256" y="262" text-anchor="middle" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="800" font-size="168" letter-spacing="4">ABC</text>
+  <rect x="132" y="298" width="248" height="5" fill="#fff"/>
+  <text x="262" y="372" text-anchor="middle" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="300" font-size="68" letter-spacing="18">living</text>
+</svg>
