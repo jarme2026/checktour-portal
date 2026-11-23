@@ -3,8 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#FDF8E1">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" id="appManifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="ABC living">
+<script>
+  // Admin link installs a separate "ABC Admin" app that always opens with ?admin=1
+  if (new URLSearchParams(location.search).get('admin') === '1') {
+    document.getElementById('appManifest').href = '/manifest-admin.json';
+    document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'ABC Admin';
+  }
+</script>
 <title>Check List Tour</title>
 <style>
   :root{
@@ -168,6 +181,23 @@
   .footer-note{ margin-top: 18px; font-size: 12px; color: var(--ink-soft); text-align:center; }
   .footer-note code{ background: var(--paper-line); padding: 1px 5px; border-radius: 3px; }
 
+  .app-box{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin: -8px 0 18px; }
+  .app-box[hidden], .app-box [hidden]{ display:none !important; }
+  .app-btn{
+    background:#000; border-color:#000; color:#fff; font-weight:600;
+    display:inline-flex; align-items:center; gap:6px; min-height: 40px;
+  }
+  .app-btn:hover{ background:#222; }
+  .app-btn:disabled{ opacity:.6; }
+  .app-hint{
+    flex: 1 1 100%;
+    font-size: 13px; color: var(--ink); line-height: 1.4;
+    background: var(--paper-line); border-radius: 6px; padding: 9px 12px;
+  }
+  .app-hint svg{ width:15px; height:15px; vertical-align:-2px; }
+  .app-on{ font-size: 13px; color: var(--stamp-green); font-weight: 600; }
+  .app-on a{ color: var(--ink-soft); font-weight: 400; margin-left: 6px; }
+
   @media (max-width: 700px){
     .progress-row{ display: none; }
     body{ padding: 20px 8px 60px; }
@@ -192,6 +222,19 @@
   <div class="board">
     <h1>Check List Tour</h1>
     <p class="subtitle" id="subtitle">Tap a project to open its checklist.</p>
+
+    <div class="app-box" id="appBox" hidden>
+      <button type="button" class="btn app-btn" id="installBtn" hidden>⬇ Install app</button>
+      <button type="button" class="btn app-btn" id="notifyBtn" hidden>🔔 Enable notifications</button>
+      <span class="app-on" id="notifyOn" hidden>🔔 Notifications on<a href="#" id="notifyOff">Turn off</a></span>
+      <div class="app-hint" id="iosHint" hidden>
+        To install on iPhone: tap <b>Share</b>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M5 11v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8"/></svg>
+        then <b>Add to Home Screen</b>.
+        Open the installed app to turn on notifications (iOS 16.4+).
+      </div>
+      <div class="app-hint" id="notifyNote" hidden></div>
+    </div>
 
     <div class="list" id="list"></div>
 
@@ -382,6 +425,143 @@ if (!isAdmin){
 } else {
   subtitleEl.textContent = 'Admin — set the ETA for each project and save. Shortcuts open in admin mode.';
 }
+
+
+// =====================================================
+// APP: install on the phone + push notifications
+// =====================================================
+const appBox = document.getElementById('appBox');
+const installBtn = document.getElementById('installBtn');
+const iosHint = document.getElementById('iosHint');
+const notifyBtn = document.getElementById('notifyBtn');
+const notifyOn = document.getElementById('notifyOn');
+const notifyOff = document.getElementById('notifyOff');
+const notifyNote = document.getElementById('notifyNote');
+
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+let swReg = null;
+let installPrompt = null;
+
+function show(el, on){ el.hidden = !on; }
+
+function refreshAppBox(){
+  const anyVisible = [installBtn, iosHint, notifyBtn, notifyOn, notifyNote].some(el => !el.hidden);
+  appBox.hidden = !anyVisible;
+}
+
+function urlB64ToUint8Array(base64){
+  const padding = '='.repeat((4 - base64.length % 4) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function sendSubscription(sub){
+  await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ subscription: sub.toJSON(), admin: isAdmin })
+  });
+}
+
+function setNote(text){
+  notifyNote.textContent = text || '';
+  show(notifyNote, !!text);
+}
+
+async function updateNotifyUI(){
+  show(notifyBtn, false);
+  show(notifyOn, false);
+  setNote('');
+
+  if (isIOS && !isStandalone){
+    // the iPhone install hint already explains it
+  } else if (!pushSupported || !swReg){
+    // browser without push support: nothing to show
+  } else if (Notification.permission === 'denied'){
+    setNote('Notifications are blocked for this site in the browser settings.');
+  } else {
+    const sub = await swReg.pushManager.getSubscription();
+    if (sub && Notification.permission === 'granted'){
+      show(notifyOn, true);
+      sendSubscription(sub).catch(() => {}); // keep the server in sync
+    } else {
+      show(notifyBtn, true);
+    }
+  }
+  refreshAppBox();
+}
+
+notifyBtn.addEventListener('click', async () => {
+  notifyBtn.disabled = true;
+  try{
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+    const keyRes = await fetch('/api/push/key', { cache: 'no-store' });
+    const { publicKey } = await keyRes.json();
+    const sub = await swReg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8Array(publicKey)
+    });
+    await sendSubscription(sub);
+  }catch(e){
+    console.error(e);
+    alert('Could not enable notifications: ' + e.message);
+  }finally{
+    notifyBtn.disabled = false;
+    updateNotifyUI();
+  }
+});
+
+notifyOff.addEventListener('click', async e => {
+  e.preventDefault();
+  try{
+    const sub = await swReg.pushManager.getSubscription();
+    if (sub){
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      });
+      await sub.unsubscribe();
+    }
+  }catch(err){ console.error(err); }
+  updateNotifyUI();
+});
+
+// Android / Chrome / Edge: native install prompt
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installPrompt = e;
+  show(installBtn, true);
+  refreshAppBox();
+});
+installBtn.addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice.catch(() => {});
+  installPrompt = null;
+  show(installBtn, false);
+  refreshAppBox();
+});
+window.addEventListener('appinstalled', () => {
+  show(installBtn, false);
+  refreshAppBox();
+});
+
+// iPhone / iPad: no install button exists, show the steps instead
+show(iosHint, isIOS && !isStandalone);
+
+(async () => {
+  if ('serviceWorker' in navigator){
+    try{ swReg = await navigator.serviceWorker.register('/sw.js'); }
+    catch(e){ console.error('Service worker failed', e); }
+  }
+  updateNotifyUI();
+})();
 
 render();
 loadEtas().then(() => { if (isAdmin && isDesktop) scheduleRefresh(); });
