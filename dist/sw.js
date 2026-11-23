@@ -1,4 +1,4 @@
-// ABC living — service worker
+// Arrival list — service worker
 // Only used to make the app installable and to show notifications.
 // Pages and data are always loaded live from the server (no offline cache).
 
@@ -9,7 +9,7 @@ self.addEventListener('push', event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
 
-  const title = data.title || 'ABC living';
+  const title = data.title || 'Arrival list';
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || 'A new sheet is ready.',
