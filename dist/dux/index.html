@@ -10,12 +10,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="ABC living">
+<meta name="apple-mobile-web-app-title" content="Arrival list">
 <script>
-  // Admin link installs a separate "ABC Admin" app that always opens with ?admin=1
+  // Admin link installs a separate "Arrival Admin" app that always opens with ?admin=1
   if (new URLSearchParams(location.search).get('admin') === '1') {
     document.getElementById('appManifest').href = '/manifest-admin.json';
-    document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'ABC Admin';
+    document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'Arrival Admin';
   }
 </script>
 <title>DUX Scan</title>
@@ -394,6 +394,25 @@ tbody tr.scan-flash{ outline:3px solid var(--stamp-green); outline-offset:-3px; 
 
 .portal-back{display:inline-block;margin:0 0 12px;font-family:'Courier New',monospace;font-size:13px;color:var(--ink-soft);text-decoration:none;}
 .portal-back:hover{color:var(--stamp-green);}
+
+/* Confirm ETA before notifying (admin, after uploading a sheet) */
+#etaConfirmOverlay{
+  position:fixed; inset:0; z-index:100001; display:none;
+  align-items:center; justify-content:center; padding:18px;
+  background:rgba(30,25,15,.66); backdrop-filter:blur(3px);
+}
+#etaConfirmOverlay.open{ display:flex; }
+#etaConfirmOverlay .checker-login-card button.eta-skip{
+  margin-top:8px; background:transparent; color:#6B6353; border-color:#8B8168; font-weight:400;
+}
+#etaConfirmOverlay .checker-login-card button:disabled{ opacity:.6; cursor:default; }
+#etaToast{
+  position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:100002;
+  background:#2F6B4F; color:#fff; padding:10px 16px; border-radius:8px;
+  font:700 13px 'Courier New',monospace; box-shadow:0 6px 18px rgba(0,0,0,.2);
+  display:none; max-width:calc(100% - 32px); text-align:center;
+}
+#etaToast.err{ background:#A94438; }
 </style>
 </head>
 <body>
@@ -742,6 +761,7 @@ async function applyParsedData(parsedHeaders, parsedRows, displayName){
   if (ok){
     renderTable();
     startPolling();
+    if (isAdmin) confirmEtaAndNotify();
   }
 }
 
@@ -1760,7 +1780,92 @@ async function init(){
 // =====================================================
 bindCheckerChangeButton();
 requestCheckerName(true).then(() => init());
-</script>
 
+// =====================================================
+// CONFIRM ETA BEFORE NOTIFYING (admin, after uploading a sheet)
+// The phones are notified only after the admin confirms the ETA.
+// =====================================================
+const PROJECT_API = '/dux';
+const ETA_KEY = 'dux';
+
+function showEtaToast(text, isError){
+  const t = document.getElementById('etaToast');
+  t.textContent = text;
+  t.classList.toggle('err', !!isError);
+  t.style.display = 'block';
+  clearTimeout(showEtaToast._t);
+  showEtaToast._t = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+async function confirmEtaAndNotify(){
+  const overlay = document.getElementById('etaConfirmOverlay');
+  const input = document.getElementById('etaConfirmInput');
+  const errorEl = document.getElementById('etaConfirmError');
+  const okBtn = document.getElementById('etaConfirmBtn');
+  const skipBtn = document.getElementById('etaSkipBtn');
+
+  errorEl.textContent = '';
+  input.value = '';
+  try{
+    const res = await fetch('/api/eta', { cache: 'no-store' });
+    const data = await res.json();
+    input.value = (data.etas && data.etas[ETA_KEY]) || '';
+  }catch(e){}
+
+  overlay.classList.add('open');
+  input.focus();
+
+  const close = () => {
+    overlay.classList.remove('open');
+    okBtn.onclick = null;
+    skipBtn.onclick = null;
+  };
+
+  skipBtn.onclick = () => {
+    close();
+    showEtaToast('Sheet saved — no notification sent.');
+  };
+
+  okBtn.onclick = async () => {
+    if (!input.value){
+      errorEl.textContent = 'Please choose the ETA date.';
+      return;
+    }
+    okBtn.disabled = true;
+    skipBtn.disabled = true;
+    try{
+      const etaRes = await fetch('/api/eta', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [ETA_KEY]: input.value })
+      });
+      if (!etaRes.ok) throw new Error('could not save the ETA');
+
+      const nRes = await fetch(PROJECT_API + '/api/notify', { method: 'POST' });
+      const n = await nRes.json().catch(() => ({}));
+      if (!nRes.ok || !n.ok) throw new Error(n.error || 'could not send the notification');
+
+      close();
+      showEtaToast('✓ ETA saved — notification sent to ' + (n.sent || 0) + ' device(s).');
+    }catch(e){
+      errorEl.textContent = 'Error: ' + e.message;
+    }finally{
+      okBtn.disabled = false;
+      skipBtn.disabled = false;
+    }
+  };
+}
+</script>
+<div id="etaConfirmOverlay">
+  <div class="checker-login-card" role="dialog" aria-modal="true" aria-labelledby="etaConfirmTitle">
+    <h2 id="etaConfirmTitle">Confirm ETA</h2>
+    <p>New sheet saved. Confirm the ETA for <strong>DUX</strong> before notifying the team.</p>
+    <input type="date" id="etaConfirmInput">
+    <div class="checker-login-error" id="etaConfirmError"></div>
+    <button type="button" id="etaConfirmBtn">Confirm &amp; notify</button>
+    <button type="button" class="eta-skip" id="etaSkipBtn">Don't notify</button>
+  </div>
+</div>
+<div id="etaToast"></div>
 </body>
 </html>
