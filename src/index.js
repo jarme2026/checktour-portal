@@ -1685,22 +1685,18 @@ export default {
     const match = url.pathname.match(/^\/(up|bo|dux)\/api(\/.*)?$/);
     if (match) {
       const project = match[1];
-      const stub = env.CHECKLIST.get(env.CHECKLIST.idFromName(project));
-      const res = await forward(stub, request, url, "/" + project + "/api", { "x-project": project });
-
-      // New sheet uploaded -> notify every subscribed phone (in the background)
-      if (match[2] === "/dataset" && request.method === "POST" && res.ok && ctx) {
+      // Admin confirmed the ETA after uploading a sheet -> notify every subscribed phone
+      if (match[2] === "/notify" && request.method === "POST") {
         const portal = env.PORTAL.get(env.PORTAL.idFromName("singleton"));
-        ctx.waitUntil(
-          portal.fetch(new Request(url.origin + "/push/notify", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ project })
-          })).catch(() => {})
-        );
+        return portal.fetch(new Request(url.origin + "/push/notify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ project })
+        }));
       }
 
-      return res;
+      const stub = env.CHECKLIST.get(env.CHECKLIST.idFromName(project));
+      return forward(stub, request, url, "/" + project + "/api", { "x-project": project });
     }
 
     // Portal API: GET /api/eta also returns the date each list was fully checked
